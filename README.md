@@ -1,4 +1,4 @@
-# Vellox
+# Plot
 
 Autonomous, voice-directed desktop intelligence powered by the AssemblyAI Voice Agent API.
 
@@ -6,7 +6,7 @@ Autonomous, voice-directed desktop intelligence powered by the AssemblyAI Voice 
 
 ## Overview
 
-Vellox is an autonomous desktop companion that transforms spoken voice into native operating system actions. Rather than functioning as a passive conversational chatbot, Vellox leverages AssemblyAI's JSON-Schema Tool Calling engine over WebSocket to diagnose operating system performance, inspect active processes, monitor network health, and capture live desktop screenshots in real time.
+Plot is an autonomous desktop companion that transforms spoken voice into native operating system actions. Rather than functioning as a passive conversational chatbot, Plot leverages AssemblyAI's JSON-Schema Tool Calling engine over WebSocket to diagnose operating system performance, inspect active processes, monitor network health, and capture live desktop screenshots in real time.
 
 Built for the AssemblyAI Voice Agent Hackathon hosted on lablab.ai.
 
@@ -62,7 +62,7 @@ Built for the AssemblyAI Voice Agent Hackathon hosted on lablab.ai.
 
 ## Tool Calling Protocol
 
-Vellox exposes structured JSON-schema tools over the AssemblyAI WebSocket session:
+Plot exposes structured JSON-schema tools over the AssemblyAI WebSocket session:
 
 ### 1. `take_screenshot`
 Captures the primary monitor buffer and displays the preview inside the desktop console.
