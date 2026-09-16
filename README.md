@@ -12,6 +12,17 @@ Built for the AssemblyAI Voice Agent Hackathon hosted on lablab.ai.
 
 ---
 
+## Interface Design
+
+Plot features an ambient, frosted-glass interface optimized for hands-free desktop interaction:
+
+- **Iridescent Pearl Core**: A central procedural orb that pulses organically in response to audio input, vocal frequency, and agent states (idle, listening, thinking, speaking).
+- **Undulating Audio Waveform**: A fluid sinusoidal audio visualizer that reflects real-time audio volume and turn-taking states.
+- **Glassmorphic Command Capsule**: A floating bottom input pill with quick diagnostic action chips (Take Screenshot, Inspect RAM, Check Wi-Fi, Full Audit).
+- **Live Telemetry Panels**: Non-intrusive frosted cards displaying desktop screenshots, running process tables, and network signal gauges.
+
+---
+
 ## Core Capabilities
 
 - **Real-Time Full-Duplex Voice**: Low-latency bidirectional audio streaming using AssemblyAI Universal-3 Pro and Voice Activity Detection (VAD).
@@ -19,7 +30,7 @@ Built for the AssemblyAI Voice Agent Hackathon hosted on lablab.ai.
 - **Desktop Screen Capture**: Spoken commands trigger native desktop screenshots for instant visual context and diagnostic review.
 - **Process & Memory Telemetry**: Query active applications, locate runaway background processes, and inspect resource utilization hands-free.
 - **Network & Connectivity Diagnostics**: Real-time Wi-Fi signal inspection, gateway ping latency, and IP telemetry spoken back to the user.
-- **Spoken Audio Synthesis**: Natural turn-taking with synthesized vocal responses played through the Web Audio API.
+- **Spoken Audio Synthesis**: Natural turn-taking with synthesized vocal responses played through the Web Audio API with instant barge-in interruption flushing.
 
 ---
 
@@ -28,21 +39,22 @@ Built for the AssemblyAI Voice Agent Hackathon hosted on lablab.ai.
 ```text
 +-------------------------------------------------------------------------------+
 |                             CLIENT APPLICATION                                |
+|                   React 19  •  Vite  •  Tailwind CSS                          |
 |                                                                               |
 |  +---------------------+   +---------------------+   +---------------------+  |
-|  | Live Voice Capture  |   | Screen Preview Box  |   | System Diagnostics  |  |
-|  | (24kHz PCM16 Mono)  |   | (Live Screenshot)   |   | (Apps, CPU, Wi-Fi)  |  |
+|  | Iridescent Pearl    |   | Live Screen Preview |   | Process & Network   |  |
+|  | & Audio Waveform    |   | (Native Screenshot) |   | Telemetry Cards     |  |
 |  +----------+----------+   +----------^----------+   +----------^----------+  |
 +-------------|-------------------------|-------------------------|-------------+
               |                         |                         |
-              | 1. Audio Stream         | 4. Tool Execution       | 4. Spoken
-              v    (PCM16 Frames)       |    (Screenshot / Net)   |    Diagnosis
+              | 1. PCM16 Audio Stream   | 4. Tool Execution       | 4. Spoken
+              v    (24kHz Mono Base64)  |    (Screenshot / Net)   |    Diagnosis
 +---------------------------------------+-------------------------+-------------+
 |                           LOCAL SYSTEM CONTROLLER                             |
 |                        Node.js Runtime & OS Bridge                            |
 |                                                                               |
-|   - Generates ephemeral AssemblyAI session tokens                             |
-|   - Executes system tools: screenshot, tasklist, netsh                        |
+|   - Generates ephemeral AssemblyAI session tokens (/api/voice-agent-token)    |
+|   - Executes system tools: screenshot, PowerShell tasklist, netsh             |
 +---------------------------------------+---------------------------------------+
                                         |
                                         | 2. WebSocket Connection
@@ -62,12 +74,12 @@ Built for the AssemblyAI Voice Agent Hackathon hosted on lablab.ai.
 
 ## Tool Calling Protocol
 
-Plot exposes structured JSON-schema tools over the AssemblyAI WebSocket session:
+Plot registers structured JSON-schema tools with the AssemblyAI Voice Agent session:
 
 ### 1. `take_screenshot`
 Captures the primary monitor buffer and displays the preview inside the desktop console.
 - **Parameters**: `None`
-- **Output**: Base64 image payload and file URI.
+- **Output**: Base64 image payload and local file path.
 
 ### 2. `get_running_apps`
 Queries the operating system for active processes sorted by memory consumption.
@@ -79,15 +91,30 @@ Measures interface connectivity, adapter name, signal quality, and gateway laten
 - **Parameters**: `ping_target` (string, optional)
 - **Output**: Wi-Fi SSID, signal percentage, IP address, and latency (ms).
 
+### 4. `kill_process`
+Terminates a specific unresponsive or resource-heavy application.
+- **Parameters**: `process_name` (string, required)
+- **Output**: Process termination status and memory freed.
+
+---
+
+## Voice Commands to Try
+
+- "Take a screenshot of my screen."
+- "What apps are running right now, and what is eating up my RAM?"
+- "Check my Wi-Fi connection and ping latency."
+- "Close Chrome if it's lagging the computer."
+- "Run a complete diagnostic on my machine."
+
 ---
 
 ## Technology Stack
 
 - **Speech & Voice Agent**: AssemblyAI Voice Agent API (WebSocket, Universal-3 Pro, VAD, Tool Calling)
 - **Frontend Interface**: React 19, TypeScript, Vite, Tailwind CSS
-- **Audio Processing**: Web Audio API (PCM16 encoder, 24kHz downsampler, AudioBuffer queue)
+- **Audio Processing**: Web Audio API (PCM16 encoder, 24kHz downsampler, AudioBuffer queue, barge-in flusher)
 - **System Bridge**: Node.js, Express, PowerShell native bindings
-- **Icons & Styling**: Lucide React, Tailwind CSS
+- **Visuals**: Procedural CSS/Canvas Iridescent Sphere, Sinusoidal Waveform Canvas, Lucide Icons
 
 ---
 
