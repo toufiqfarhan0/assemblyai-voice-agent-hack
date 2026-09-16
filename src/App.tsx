@@ -1,16 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import TitleBar from './components/TitleBar';
 import OrbCore from './components/OrbCore';
 import WaveformRibbon from './components/WaveformRibbon';
 import QuickActions from './components/QuickActions';
 import TelemetryDrawer from './components/TelemetryDrawer';
+import { useVoiceAgent } from './hooks/useVoiceAgent';
 import { LayoutDashboard, Mic, MicOff, Send, Sparkles } from 'lucide-react';
 import type { ScreenshotResult, RunningProcess, NetworkStatus } from './vite-env';
 
 export default function App() {
   const [status, setStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [audioLevel, setAudioLevel] = useState<number>(0);
-  const [transcript, setTranscript] = useState<string>('What can I help you with?');
+  const [transcript, setTranscript] = useState<string>('Plot online. What can I help you with?');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [inputVal, setInputVal] = useState('');
 
@@ -19,7 +20,36 @@ export default function App() {
   const [processes, setProcesses] = useState<RunningProcess[]>([]);
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
 
-  // Initial network & process query
+  // Initialize Voice Agent Hook
+  const voiceAgent = useVoiceAgent({
+    onStatusChange: setStatus,
+    onAudioLevel: setAudioLevel,
+    onTranscript: (text) => {
+      setTranscript(text);
+    },
+    onScreenshotCaptured: (res) => {
+      setScreenshot(res);
+      setIsDrawerOpen(true);
+    },
+    onProcessesUpdated: (procs) => {
+      setProcesses(procs);
+      setIsDrawerOpen(true);
+    },
+    onNetworkUpdated: (net) => {
+      setNetwork(net);
+      setIsDrawerOpen(true);
+    },
+  });
+
+  const handleToggleVoice = useCallback(() => {
+    if (status === 'idle') {
+      voiceAgent.startSession();
+    } else {
+      voiceAgent.stopSession();
+    }
+  }, [status, voiceAgent]);
+
+  // Initial network & process query and global hotkey
   useEffect(() => {
     if (window.plotAPI) {
       window.plotAPI.checkNetwork().then(setNetwork).catch(console.error);
@@ -34,20 +64,7 @@ export default function App() {
         cleanupHotkey();
       };
     }
-  }, []);
-
-  const handleToggleVoice = () => {
-    if (status === 'idle') {
-      setStatus('listening');
-      setTranscript('Listening for your command...');
-      // Simulated audio level activity for UI responsiveness
-      setAudioLevel(0.65);
-    } else {
-      setStatus('idle');
-      setAudioLevel(0);
-      setTranscript('What can I help you with?');
-    }
-  };
+  }, [handleToggleVoice]);
 
   const handleQuickAction = async (action: 'screenshot' | 'processes' | 'network' | 'health') => {
     setStatus('thinking');
@@ -59,7 +76,7 @@ export default function App() {
         setScreenshot(res);
         setIsDrawerOpen(true);
         setStatus('speaking');
-        setTranscript('Captured primary monitor. Visual telemetry is ready.');
+        setTranscript('Captured primary monitor display.');
       }
     }
 
@@ -69,7 +86,7 @@ export default function App() {
         setProcesses(procs);
         setIsDrawerOpen(true);
         setStatus('speaking');
-        setTranscript(`Found ${procs.length} top resource-intensive background processes.`);
+        setTranscript(`Found ${procs.length} top resource-intensive processes.`);
       }
     }
 
@@ -79,13 +96,13 @@ export default function App() {
         setNetwork(net);
         setIsDrawerOpen(true);
         setStatus('speaking');
-        setTranscript(`Wi-Fi connected to ${net.ssid} with ${net.signal}% signal quality.`);
+        setTranscript(`Wi-Fi connected to ${net.ssid} (${net.signal}% signal quality).`);
       }
     }
 
     setTimeout(() => {
       setStatus('idle');
-    }, 4000);
+    }, 3500);
   };
 
   const handleSubmitText = (e?: React.FormEvent) => {
