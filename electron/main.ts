@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, globalShortcut } from 'electron';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { capturePrimaryScreen } from './services/screen';
 import { getTopProcesses } from './services/process';
@@ -7,6 +8,8 @@ import { checkNetworkStatus } from './services/network';
 import { mintVoiceAgentToken } from './services/auth';
 
 dotenv.config();
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -21,7 +24,7 @@ function createWindow() {
     hasShadow: true,
     backgroundColor: '#00000000',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
+      preload: path.join(__dirname, 'preload.js'),
       sandbox: false,
       contextIsolation: true,
     },

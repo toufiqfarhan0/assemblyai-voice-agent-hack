@@ -12,7 +12,7 @@ export interface RunningProcess {
 export async function getTopProcesses(limit: number = 6): Promise<RunningProcess[]> {
   try {
     if (process.platform === 'win32') {
-      const psCommand = `Get-Process | Where-Object { $_.MainWindowTitle -ne '' -or $_.WorkingSet64 -gt 50MB } | Sort-Object WorkingSet64 -Descending | Select-Object -First ${limit} ProcessName, Id, @{Name="MemoryMB";Expression={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json -Compress`;
+      const psCommand = `Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First ${limit} ProcessName, Id, WorkingSet64 | ConvertTo-Json -Compress`;
       
       const { stdout } = await execAsync(`powershell -NoProfile -Command "${psCommand}"`);
       
@@ -21,10 +21,10 @@ export async function getTopProcesses(limit: number = 6): Promise<RunningProcess
       const parsed = JSON.parse(stdout.trim());
       const items = Array.isArray(parsed) ? parsed : [parsed];
       
-      return items.map((item: { ProcessName?: string; Id?: number; MemoryMB?: number }) => ({
+      return items.map((item: { ProcessName?: string; Id?: number; WorkingSet64?: number }) => ({
         name: item.ProcessName ?? 'Unknown',
         pid: item.Id ?? 0,
-        memoryMB: typeof item.MemoryMB === 'number' ? item.MemoryMB : 0,
+        memoryMB: typeof item.WorkingSet64 === 'number' ? Math.round((item.WorkingSet64 / (1024 * 1024)) * 10) / 10 : 0,
       }));
     } else {
       // Fallback for macOS / Linux
