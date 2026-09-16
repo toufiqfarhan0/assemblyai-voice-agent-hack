@@ -201,20 +201,26 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
     // 1024 samples @ 24kHz = 42.6ms buffer latency (4x faster than 4096)
     const processor = audioCtx.createScriptProcessor(1024, 1, 1);
 
+    let lastLevelEmit = 0;
     processor.onaudioprocess = (event) => {
       if (!sessionReadyRef.current || socket.readyState !== WebSocket.OPEN) return;
       const channelData = event.inputBuffer.getChannelData(0);
 
-      // Compute RMS volume for visualizer
-      let sum = 0;
-      for (let i = 0; i < channelData.length; i++) {
-        sum += channelData[i] * channelData[i];
+      // Throttled RMS volume calculation to prevent React render storms
+      const now = performance.now();
+      if (now - lastLevelEmit > 50) {
+        let sum = 0;
+        const step = 4;
+        for (let i = 0; i < channelData.length; i += step) {
+          sum += channelData[i] * channelData[i];
+        }
+        const rms = Math.sqrt((sum * step) / channelData.length);
+        const level = Math.min(1, rms * 4.5);
+        onAudioLevel?.(level);
+        lastLevelEmit = now;
       }
-      const rms = Math.sqrt(sum / channelData.length);
-      const level = Math.min(1, rms * 5);
-      onAudioLevel?.(level);
 
-      // Stream audio frame immediately
+      // Stream audio frame immediately with zero buffer latency
       socket.send(
         JSON.stringify({
           type: 'input.audio',

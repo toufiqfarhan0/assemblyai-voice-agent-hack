@@ -42,7 +42,7 @@ export default function OrbCore({ status, audioLevel = 0, onClick }: OrbCoreProp
       <button
         onClick={onClick}
         type="button"
-        title={status === 'idle' ? 'Click to Start Voice Session' : 'Listening... Click to Stop'}
+        title="Plot Real-Time Voice Intelligence Core"
         className="group relative flex h-40 w-40 cursor-pointer items-center justify-center rounded-full outline-none transition-transform duration-300 hover:scale-105 active:scale-95"
         style={{ transform: `scale(${dynamicScale})` }}
       >

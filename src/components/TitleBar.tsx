@@ -1,10 +1,10 @@
-import { Minus, X, Radio, Command } from 'lucide-react';
+import { Minus, X, Command } from 'lucide-react';
 
 interface TitleBarProps {
-  status: 'idle' | 'listening' | 'thinking' | 'speaking';
+  status?: 'idle' | 'listening' | 'thinking' | 'speaking';
 }
 
-export default function TitleBar({ status }: TitleBarProps) {
+export default function TitleBar({}: TitleBarProps) {
   const handleMinimize = () => {
     window.plotAPI?.minimizeWindow();
   };
@@ -12,20 +12,6 @@ export default function TitleBar({ status }: TitleBarProps) {
   const handleClose = () => {
     window.plotAPI?.closeWindow();
   };
-
-  const statusLabel = {
-    idle: 'Standby',
-    listening: 'Listening...',
-    thinking: 'Analyzing System...',
-    speaking: 'Plot Speaking',
-  }[status];
-
-  const statusColor = {
-    idle: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
-    listening: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 animate-pulse',
-    thinking: 'bg-purple-500/20 text-purple-300 border-purple-500/30 animate-pulse',
-    speaking: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-  }[status];
 
   return (
     <div className="flex h-12 w-full items-center justify-between px-5 select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
@@ -37,12 +23,6 @@ export default function TitleBar({ status }: TitleBarProps) {
           </div>
         </div>
         <span className="text-sm font-semibold tracking-wide text-white/90">Plot</span>
-        
-        {/* Status Badge */}
-        <div className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium backdrop-blur-md ${statusColor}`}>
-          <Radio className="h-3 w-3 animate-spin" style={{ animationDuration: '4s' }} />
-          <span>{statusLabel}</span>
-        </div>
       </div>
 
       {/* Center Hotkey Hint */}

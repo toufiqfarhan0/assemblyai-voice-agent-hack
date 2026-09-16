@@ -1,17 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import TitleBar from './components/TitleBar';
 import OrbCore from './components/OrbCore';
 import WaveformRibbon from './components/WaveformRibbon';
 import QuickActions from './components/QuickActions';
 import TelemetryDrawer from './components/TelemetryDrawer';
 import { useVoiceAgent } from './hooks/useVoiceAgent';
-import { LayoutDashboard, Mic, MicOff, Send, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Mic, MicOff, Send, Sparkles, Cpu, Wifi, Activity } from 'lucide-react';
 import type { ScreenshotResult, RunningProcess, NetworkStatus } from './vite-env';
 
 export default function App() {
-  const [status, setStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [status, setStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('listening');
   const [audioLevel, setAudioLevel] = useState<number>(0);
-  const [transcript, setTranscript] = useState<string>('Plot online. What can I help you with?');
+  const [transcript, setTranscript] = useState<string>('Plot online and listening in real-time...');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [inputVal, setInputVal] = useState('');
 
@@ -20,9 +20,14 @@ export default function App() {
   const [processes, setProcesses] = useState<RunningProcess[]>([]);
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
 
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
   // Initialize Voice Agent Hook
   const voiceAgent = useVoiceAgent({
-    onStatusChange: setStatus,
+    onStatusChange: (newStatus) => {
+      setStatus(newStatus);
+    },
     onAudioLevel: setAudioLevel,
     onTranscript: (text) => {
       setTranscript(text);
@@ -41,15 +46,28 @@ export default function App() {
     },
   });
 
-  const handleToggleVoice = useCallback(() => {
-    if (status === 'idle') {
-      voiceAgent.startSession();
-    } else {
-      voiceAgent.stopSession();
-    }
-  }, [status, voiceAgent]);
+  const voiceAgentRef = useRef(voiceAgent);
+  voiceAgentRef.current = voiceAgent;
 
-  // Initial network & process query and global hotkey
+  // Toggle voice session using stable refs to prevent re-renders
+  const handleToggleVoice = useCallback(() => {
+    if (statusRef.current === 'idle') {
+      voiceAgentRef.current.startSession();
+    } else {
+      voiceAgentRef.current.stopSession();
+    }
+  }, []);
+
+  // Auto-connect voice session on mount for a real-time, always-on experience
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      voiceAgentRef.current.startSession();
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Fetch initial telemetry and bind global hotkey ONCE on mount
   useEffect(() => {
     if (window.plotAPI) {
       window.plotAPI.checkNetwork().then(setNetwork).catch(console.error);
@@ -101,8 +119,8 @@ export default function App() {
     }
 
     setTimeout(() => {
-      setStatus('idle');
-    }, 3500);
+      setStatus('listening');
+    }, 2800);
   };
 
   const handleSubmitText = (e?: React.FormEvent) => {
@@ -129,6 +147,9 @@ export default function App() {
     }
   };
 
+  // Compute total memory of top apps for real-time vitals
+  const totalTopMemoryMB = processes.reduce((acc, p) => acc + p.memoryMB, 0);
+
   return (
     <div className="relative flex h-screen w-screen items-center justify-center p-4">
       {/* Frosted Glass Floating Command Card */}
@@ -141,18 +162,42 @@ export default function App() {
           {/* Subtle Ambient Radial Lighting */}
           <div className="pointer-events-none absolute -top-16 h-64 w-96 rounded-full bg-gradient-to-r from-purple-500/20 to-cyan-500/20 blur-3xl" />
 
+          {/* Realtime Live Vitals Badge Strip */}
+          <div className="mb-2.5 flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300 backdrop-blur-md">
+            <div className="flex items-center gap-1.5 text-emerald-400">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              <span className="font-semibold tracking-wide">Realtime Active</span>
+            </div>
+            <span className="text-white/20">•</span>
+            <div className="flex items-center gap-1 text-slate-400">
+              <Cpu className="h-3 w-3 text-purple-400" />
+              <span>{totalTopMemoryMB > 0 ? `${Math.round(totalTopMemoryMB)} MB` : 'Monitoring RAM'}</span>
+            </div>
+            <span className="text-white/20">•</span>
+            <div className="flex items-center gap-1 text-slate-400">
+              <Wifi className="h-3 w-3 text-cyan-400" />
+              <span>{network ? `${network.gatewayPingMs}ms ping` : 'Connected'}</span>
+            </div>
+          </div>
+
           {/* Heading */}
           <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">
             Voice Powers <span className="bg-gradient-to-r from-purple-400 via-pink-300 to-cyan-400 bg-clip-text text-transparent">Instant Desktop</span> & System Actions
           </h1>
 
-          {/* Subtitle / Dynamic Spoken Caption */}
-          <p className="mt-2.5 max-w-lg text-sm text-slate-300/90 font-medium transition-all duration-300 min-h-[22px]">
-            {transcript}
-          </p>
+          {/* Subtitle / Dynamic Real-Time Spoken Caption */}
+          <div className="mt-2.5 flex max-w-lg items-center justify-center gap-1.5 min-h-[26px]">
+            <Activity className="h-3.5 w-3.5 text-purple-400 animate-pulse shrink-0" />
+            <p className="text-sm text-slate-200 font-medium transition-all duration-150">
+              {transcript}
+            </p>
+          </div>
 
           {/* 3D Iridescent Holographic Orb */}
-          <div className="my-2">
+          <div className="my-1.5">
             <OrbCore
               status={status}
               audioLevel={audioLevel}
@@ -204,18 +249,27 @@ export default function App() {
               <LayoutDashboard className="h-4 w-4 text-cyan-400" />
             </button>
 
-            {/* Voice Toggle Button */}
+            {/* Realtime Live Voice Pill Toggle */}
             <button
               type="button"
               onClick={handleToggleVoice}
               className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
-                status === 'listening'
-                  ? 'bg-rose-500/80 text-white animate-pulse'
-                  : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                status === 'listening' || status === 'speaking'
+                  ? 'bg-gradient-to-r from-emerald-500/80 to-cyan-500/80 text-white shadow-md'
+                  : 'bg-white/10 text-slate-300 hover:bg-white/20'
               }`}
             >
-              {status === 'listening' ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5 text-purple-300" />}
-              <span>{status === 'listening' ? 'Stop' : 'Voice'}</span>
+              {status === 'listening' || status === 'speaking' ? (
+                <>
+                  <Mic className="h-3.5 w-3.5 text-emerald-200 animate-pulse" />
+                  <span>Live</span>
+                </>
+              ) : (
+                <>
+                  <MicOff className="h-3.5 w-3.5 text-slate-400" />
+                  <span>Muted</span>
+                </>
+              )}
             </button>
 
             {/* Send Button */}

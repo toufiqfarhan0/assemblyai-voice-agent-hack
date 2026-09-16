@@ -26,7 +26,16 @@ function getLocalIpAddress(): string {
   return '127.0.0.1';
 }
 
+let cachedNetwork: NetworkStatus | null = null;
+let lastNetFetch = 0;
+const NET_CACHE_TTL = 4000;
+
 export async function checkNetworkStatus(): Promise<NetworkStatus> {
+  const now = Date.now();
+  if (cachedNetwork && now - lastNetFetch < NET_CACHE_TTL) {
+    return cachedNetwork;
+  }
+
   const ip = getLocalIpAddress();
   let ssid = 'Wi-Fi / Ethernet';
   let signal = 100;
@@ -36,7 +45,7 @@ export async function checkNetworkStatus(): Promise<NetworkStatus> {
   try {
     if (process.platform === 'win32') {
       try {
-        const { stdout: wlanOut } = await execAsync('netsh wlan show interfaces');
+        const { stdout: wlanOut } = await execAsync('netsh wlan show interfaces', { timeout: 1000 });
         const ssidMatch = wlanOut.match(/^\s*SSID\s*:\s*(.+)$/m);
         const signalMatch = wlanOut.match(/^\s*Signal\s*:\s*(\d+)%/m);
         const stateMatch = wlanOut.match(/^\s*State\s*:\s*(.+)$/m);
@@ -49,9 +58,9 @@ export async function checkNetworkStatus(): Promise<NetworkStatus> {
         state = 'Connected (Ethernet)';
       }
 
-      // Quick ping test
+      // Quick non-blocking ping test with 300ms timeout
       try {
-        const { stdout: pingOut } = await execAsync('ping -n 1 8.8.8.8');
+        const { stdout: pingOut } = await execAsync('ping -n 1 -w 300 8.8.8.8', { timeout: 600 });
         const timeMatch = pingOut.match(/time[=<](\d+)ms/i);
         if (timeMatch && timeMatch[1]) {
           gatewayPingMs = parseInt(timeMatch[1], 10);
@@ -65,11 +74,13 @@ export async function checkNetworkStatus(): Promise<NetworkStatus> {
     console.error('Failed to query network status:', err);
   }
 
-  return {
+  cachedNetwork = {
     ssid,
     signal,
     ip,
     gatewayPingMs,
     state,
   };
+  lastNetFetch = now;
+  return cachedNetwork;
 }

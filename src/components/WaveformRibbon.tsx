@@ -9,6 +9,10 @@ interface WaveformRibbonProps {
 export default function WaveformRibbon({ isActive, audioLevel = 0, height = 70 }: WaveformRibbonProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const phaseRef = useRef(0);
+  const audioLevelRef = useRef(audioLevel);
+  const smoothLevelRef = useRef(0);
+
+  audioLevelRef.current = audioLevel;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -23,12 +27,16 @@ export default function WaveformRibbon({ isActive, audioLevel = 0, height = 70 }
       const h = canvas.height;
       ctx.clearRect(0, 0, width, h);
 
+      // Smooth level interpolation for organic movement without GC spikes
+      smoothLevelRef.current += (audioLevelRef.current - smoothLevelRef.current) * 0.18;
+      const currentLevel = smoothLevelRef.current;
+
       // Phase increment (faster when active)
-      phaseRef.current += isActive ? 0.05 + audioLevel * 0.08 : 0.015;
+      phaseRef.current += isActive ? 0.04 + currentLevel * 0.08 : 0.015;
       const phase = phaseRef.current;
 
       // Base amplitude
-      const baseAmp = isActive ? Math.max(12, audioLevel * (h * 0.42)) : 4;
+      const baseAmp = isActive ? Math.max(10, currentLevel * (h * 0.45)) : 4;
 
       // Layer definitions: [color, amplitudeMultiplier, frequency, phaseShift, alpha]
       const layers: [string, number, number, number, number][] = [
@@ -73,7 +81,7 @@ export default function WaveformRibbon({ isActive, audioLevel = 0, height = 70 }
     return () => {
       cancelAnimationFrame(animationId);
     };
-  }, [isActive, audioLevel]);
+  }, [isActive, height]);
 
   return (
     <div className="relative w-full overflow-hidden flex items-center justify-center">
