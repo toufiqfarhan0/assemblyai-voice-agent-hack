@@ -79,3 +79,27 @@ export async function getTopProcesses(limit: number = 6): Promise<RunningProcess
     return cachedProcesses.slice(0, limit);
   }
 }
+
+export async function killProcess(pidOrName: number | string): Promise<{ success: boolean; message: string }> {
+  try {
+    cachedProcesses = [];
+    lastFetchTime = 0;
+
+    if (process.platform === 'win32') {
+      if (typeof pidOrName === 'number') {
+        await execAsync(`taskkill /F /PID ${pidOrName}`);
+        return { success: true, message: `Terminated process with PID ${pidOrName}` };
+      } else {
+        const image = pidOrName.endsWith('.exe') ? pidOrName : `${pidOrName}.exe`;
+        await execAsync(`taskkill /F /IM "${image}"`);
+        return { success: true, message: `Terminated process ${image}` };
+      }
+    } else {
+      await execAsync(`kill -9 ${pidOrName}`);
+      return { success: true, message: `Terminated process ${pidOrName}` };
+    }
+  } catch (err) {
+    return { success: false, message: `Failed to terminate: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+

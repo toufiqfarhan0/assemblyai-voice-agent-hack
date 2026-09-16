@@ -3,9 +3,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { capturePrimaryScreen } from './services/screen';
-import { getTopProcesses } from './services/process';
+import { getTopProcesses, killProcess } from './services/process';
 import { checkNetworkStatus } from './services/network';
 import { mintVoiceAgentToken } from './services/auth';
+import { mintStreamingSTTToken } from './services/sttAuth';
+import { launchDesktopApp } from './services/actions';
+import { enhanceMeetingNotes } from './services/enhancer';
 
 dotenv.config();
 
@@ -59,8 +62,24 @@ ipcMain.handle('os:check-network', async () => {
   return await checkNetworkStatus();
 });
 
+ipcMain.handle('os:kill-process', async (_event, pidOrName: number | string) => {
+  return await killProcess(pidOrName);
+});
+
+ipcMain.handle('os:launch-app', async (_event, appQuery: string) => {
+  return await launchDesktopApp(appQuery);
+});
+
 ipcMain.handle('auth:get-token', async () => {
   return await mintVoiceAgentToken();
+});
+
+ipcMain.handle('auth:get-stt-token', async () => {
+  return await mintStreamingSTTToken();
+});
+
+ipcMain.handle('notes:enhance', async (_event, rawNotes: string, transcript: string) => {
+  return await enhanceMeetingNotes(rawNotes, transcript);
 });
 
 ipcMain.handle('window:minimize', () => {

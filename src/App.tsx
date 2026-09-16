@@ -1,40 +1,120 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import TitleBar from './components/TitleBar';
+import MeetingNotepad, { ActionItem } from './components/MeetingNotepad';
+import TranscriptFeed from './components/TranscriptFeed';
+import VoiceCopilotWidget from './components/VoiceCopilotWidget';
 import OrbCore from './components/OrbCore';
-import WaveformRibbon from './components/WaveformRibbon';
 import QuickActions from './components/QuickActions';
 import TelemetryDrawer from './components/TelemetryDrawer';
+import WaveformRibbon from './components/WaveformRibbon';
+import { useRealtimeSTT } from './hooks/useRealtimeSTT';
 import { useVoiceAgent } from './hooks/useVoiceAgent';
-import { LayoutDashboard, Mic, MicOff, Send, Sparkles, Cpu, Wifi, Activity } from 'lucide-react';
-import type { ScreenshotResult, RunningProcess, NetworkStatus } from './vite-env';
+import {
+  FileText,
+  Cpu,
+  Wifi,
+  Bot,
+} from 'lucide-react';
+import type { ScreenshotResult, RunningProcess, NetworkStatus, EnrichedMeetingNotes } from './vite-env';
 
 export default function App() {
-  const [status, setStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('listening');
-  const [audioLevel, setAudioLevel] = useState<number>(0);
-  const [transcript, setTranscript] = useState<string>('Plot online and listening in real-time...');
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [inputVal, setInputVal] = useState('');
+  // Workspace Mode: 'meeting' (Granola AI Notepad) or 'copilot' (Desktop J.A.R.V.I.S.)
+  const [workspaceMode, setWorkspaceMode] = useState<'meeting' | 'copilot'>('meeting');
 
-  // Telemetry state
+  // Meeting State (Granola)
+  const [meetingTitle, setMeetingTitle] = useState('Product & Engineering Sprint Sync');
+  const [rawNotes, setRawNotes] = useState(
+    `• alex: WebSocket streaming STT is deployed and tested\n• sarah: finished the Granola split-pane UI\n• david: enterprise demo Friday at 2 PM, need action items locked in\n• budget cap for infrastructure: $50k\n• follow up on slide exports tomorrow morning`
+  );
+  const [enrichedNotes, setEnrichedNotes] = useState<EnrichedMeetingNotes | null>(null);
+  const [isEnhancing, setIsEnhancing] = useState(false);
+  const [slides, setSlides] = useState<ScreenshotResult[]>([]);
+  const [actionItems, setActionItems] = useState<ActionItem[]>([
+    { id: 'act-1', text: 'Finalize Granola split-pane typography and export', assignee: 'Sarah', done: false },
+    { id: 'act-2', text: 'Review infrastructure budget allocation ($50k)', assignee: 'David', done: false },
+    { id: 'act-3', text: 'Verify 24kHz audio capture buffer with zero latency', assignee: 'Alex', done: true },
+  ]);
+
+  // Telemetry & Desktop state
   const [screenshot, setScreenshot] = useState<ScreenshotResult | null>(null);
   const [processes, setProcesses] = useState<RunningProcess[]>([]);
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  const statusRef = useRef(status);
-  statusRef.current = status;
+  // Voice Agent State
+  const [voiceStatus, setVoiceStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [voiceAudioLevel, setVoiceAudioLevel] = useState<number>(0);
+  const [voiceTranscript, setVoiceTranscript] = useState<string>('');
+  const [sttAudioLevel, setSttAudioLevel] = useState<number>(0);
 
-  // Initialize Voice Agent Hook
-  const voiceAgent = useVoiceAgent({
-    onStatusChange: (newStatus) => {
-      setStatus(newStatus);
-    },
-    onAudioLevel: setAudioLevel,
-    onTranscript: (text) => {
-      setTranscript(text);
-    },
-    onScreenshotCaptured: (res) => {
+  // Refs for stable callbacks
+  const rawNotesRef = useRef(rawNotes);
+  rawNotesRef.current = rawNotes;
+
+  // Real-time Streaming STT Hook (Ambient meeting listener)
+  const realtimeSTT = useRealtimeSTT({
+    sampleRate: 16000,
+    onAudioLevel: setSttAudioLevel,
+  });
+
+  const fullTranscriptRef = useRef('');
+  fullTranscriptRef.current = realtimeSTT.fullTranscriptText;
+
+  // Action Item Handlers
+  const handleToggleActionItem = useCallback((id: string) => {
+    setActionItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, done: !item.done } : item))
+    );
+  }, []);
+
+  const handleAddActionItem = useCallback((text: string, assignee: string) => {
+    const newItem: ActionItem = {
+      id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+      text,
+      assignee: assignee || 'Team',
+      done: false,
+    };
+    setActionItems((prev) => [...prev, newItem]);
+  }, []);
+
+  // Snap slide screenshot handler
+  const handleSnapSlide = useCallback(async () => {
+    const res = await window.plotAPI?.takeScreenshot();
+    if (res?.success) {
+      setSlides((prev) => [res, ...prev]);
       setScreenshot(res);
-      setIsDrawerOpen(true);
+    }
+  }, []);
+
+  // Note Enhancement (Granola Synthesis)
+  const handleEnhanceNotes = useCallback(async () => {
+    setIsEnhancing(true);
+    try {
+      const result = await window.plotAPI?.enhanceNotes(
+        rawNotesRef.current,
+        fullTranscriptRef.current
+      );
+      if (result) {
+        setEnrichedNotes(result);
+        if (result.actionItems && result.actionItems.length > 0) {
+          setActionItems((prev) => [...prev, ...result.actionItems]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to enhance notes:', err);
+    } finally {
+      setIsEnhancing(false);
+    }
+  }, []);
+
+  // Voice Agent Hook (Interactive Voice Copilot)
+  const voiceAgent = useVoiceAgent({
+    onStatusChange: setVoiceStatus,
+    onAudioLevel: setVoiceAudioLevel,
+    onTranscript: (text) => setVoiceTranscript(text),
+    onScreenshotCaptured: (res) => {
+      setSlides((prev) => [res, ...prev]);
+      setScreenshot(res);
     },
     onProcessesUpdated: (procs) => {
       setProcesses(procs);
@@ -44,36 +124,29 @@ export default function App() {
       setNetwork(net);
       setIsDrawerOpen(true);
     },
+    onAddActionItem: handleAddActionItem,
+    onTriggerEnhance: handleEnhanceNotes,
+    getActiveMeetingTranscript: () => fullTranscriptRef.current,
+    getActiveNotes: () => rawNotesRef.current,
   });
 
   const voiceAgentRef = useRef(voiceAgent);
   voiceAgentRef.current = voiceAgent;
 
-  // Toggle voice session using stable refs to prevent re-renders
   const handleToggleVoice = useCallback(() => {
-    if (statusRef.current === 'idle') {
+    if (voiceStatus === 'idle') {
       voiceAgentRef.current.startSession();
     } else {
       voiceAgentRef.current.stopSession();
     }
-  }, []);
+  }, [voiceStatus]);
 
-  // Auto-connect voice session on mount for a real-time, always-on experience
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      voiceAgentRef.current.startSession();
-    }, 400);
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Fetch initial telemetry and bind global hotkey ONCE on mount
+  // Global hotkey binding
   useEffect(() => {
     if (window.plotAPI) {
       window.plotAPI.checkNetwork().then(setNetwork).catch(console.error);
       window.plotAPI.getRunningApps(5).then(setProcesses).catch(console.error);
 
-      // Listen for global hotkey trigger (Ctrl+Shift+Space)
       const cleanupHotkey = window.plotAPI.onHotkeyTriggered(() => {
         handleToggleVoice();
       });
@@ -84,215 +157,200 @@ export default function App() {
     }
   }, [handleToggleVoice]);
 
-  const handleQuickAction = async (action: 'screenshot' | 'processes' | 'network' | 'health') => {
-    setStatus('thinking');
-    setTranscript(`Executing ${action}...`);
-
-    if (action === 'screenshot' || action === 'health') {
-      const res = await window.plotAPI?.takeScreenshot();
-      if (res?.success) {
-        setScreenshot(res);
-        setIsDrawerOpen(true);
-        setStatus('speaking');
-        setTranscript('Captured primary monitor display.');
-      }
-    }
-
-    if (action === 'processes' || action === 'health') {
-      const procs = await window.plotAPI?.getRunningApps(6);
-      if (procs) {
-        setProcesses(procs);
-        setIsDrawerOpen(true);
-        setStatus('speaking');
-        setTranscript(`Found ${procs.length} top resource-intensive processes.`);
-      }
-    }
-
-    if (action === 'network' || action === 'health') {
-      const net = await window.plotAPI?.checkNetwork();
-      if (net) {
-        setNetwork(net);
-        setIsDrawerOpen(true);
-        setStatus('speaking');
-        setTranscript(`Wi-Fi connected to ${net.ssid} (${net.signal}% signal quality).`);
-      }
-    }
-
-    setTimeout(() => {
-      setStatus('listening');
-    }, 2800);
-  };
-
-  const handleSubmitText = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!inputVal.trim()) return;
-
-    const query = inputVal.toLowerCase();
-    const rawText = inputVal;
-    setInputVal('');
-
-    if (voiceAgent.isConnected) {
-      voiceAgent.sendTextMessage(rawText);
-      return;
-    }
-
-    if (query.includes('screenshot') || query.includes('screen')) {
-      handleQuickAction('screenshot');
-    } else if (query.includes('app') || query.includes('process') || query.includes('memory') || query.includes('ram')) {
-      handleQuickAction('processes');
-    } else if (query.includes('wifi') || query.includes('network') || query.includes('internet') || query.includes('ping')) {
-      handleQuickAction('network');
-    } else {
-      handleQuickAction('health');
-    }
-  };
-
-  // Compute total memory of top apps for real-time vitals
-  const totalTopMemoryMB = processes.reduce((acc, p) => acc + p.memoryMB, 0);
-
   return (
-    <div className="relative flex h-screen w-screen items-center justify-center p-4">
+    <div className="relative flex h-screen w-screen items-center justify-center p-3 select-none">
       {/* Frosted Glass Floating Command Card */}
-      <div className="glass-panel relative flex h-full max-h-[710px] w-full max-w-[980px] flex-col justify-between overflow-hidden rounded-[32px] border border-white/15 bg-slate-950/80 shadow-2xl">
-        {/* TitleBar & Drag Area */}
-        <TitleBar status={status} />
+      <div className="glass-panel relative flex h-full max-h-[760px] w-full max-w-[1140px] flex-col overflow-hidden rounded-[28px] border border-white/15 bg-slate-950/85 shadow-2xl">
+        {/* Title Bar & Top Nav */}
+        <div className="flex h-12 w-full items-center justify-between border-b border-white/10 px-5" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          {/* Brand Emblem & Mode Selector */}
+          <div className="flex items-center gap-4" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <div className="flex items-center gap-2">
+              <div className="relative flex h-7 w-7 items-center justify-center rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-500 to-cyan-400 p-[1px] shadow-lg shadow-purple-500/20">
+                <div className="flex h-full w-full items-center justify-center rounded-[11px] bg-slate-950 font-bold text-xs tracking-wider text-white">
+                  P
+                </div>
+              </div>
+              <span className="text-sm font-bold tracking-wide text-white">Plot</span>
+            </div>
 
-        {/* Central Content Area */}
-        <div className="relative flex flex-1 flex-col items-center justify-center px-6 text-center">
-          {/* Subtle Ambient Radial Lighting */}
-          <div className="pointer-events-none absolute -top-16 h-64 w-96 rounded-full bg-gradient-to-r from-purple-500/20 to-cyan-500/20 blur-3xl" />
+            {/* Mode Switcher Tabs */}
+            <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 p-1 text-xs">
+              <button
+                onClick={() => setWorkspaceMode('meeting')}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold transition ${
+                  workspaceMode === 'meeting'
+                    ? 'bg-purple-600/80 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <FileText className="h-3 w-3" />
+                <span>Meeting Notepad (Granola)</span>
+              </button>
+              <button
+                onClick={() => setWorkspaceMode('copilot')}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold transition ${
+                  workspaceMode === 'copilot'
+                    ? 'bg-cyan-600/80 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Bot className="h-3 w-3" />
+                <span>Desktop Copilot</span>
+              </button>
+            </div>
+          </div>
 
-          {/* Realtime Live Vitals Badge Strip */}
-          <div className="mb-2.5 flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300 backdrop-blur-md">
-            <div className="flex items-center gap-1.5 text-emerald-400">
+          {/* Vitals Strip */}
+          <div className="hidden items-center gap-3 text-xs text-slate-300 md:flex" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
               </span>
-              <span className="font-semibold tracking-wide">Realtime Active</span>
+              <span className="font-medium text-emerald-300">
+                {realtimeSTT.isRecording ? 'Meeting Stream Live' : 'Voice Pipeline Ready'}
+              </span>
             </div>
-            <span className="text-white/20">•</span>
+
             <div className="flex items-center gap-1 text-slate-400">
               <Cpu className="h-3 w-3 text-purple-400" />
-              <span>{totalTopMemoryMB > 0 ? `${Math.round(totalTopMemoryMB)} MB` : 'Monitoring RAM'}</span>
+              <span>{processes.length > 0 ? `${Math.round(processes.reduce((a, p) => a + p.memoryMB, 0))} MB` : 'Monitoring'}</span>
             </div>
-            <span className="text-white/20">•</span>
+
             <div className="flex items-center gap-1 text-slate-400">
               <Wifi className="h-3 w-3 text-cyan-400" />
-              <span>{network ? `${network.gatewayPingMs}ms ping` : 'Connected'}</span>
+              <span>{network ? `${network.gatewayPingMs}ms` : 'Connected'}</span>
             </div>
           </div>
 
-          {/* Heading */}
-          <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">
-            Voice Powers <span className="bg-gradient-to-r from-purple-400 via-pink-300 to-cyan-400 bg-clip-text text-transparent">Instant Desktop</span> & System Actions
-          </h1>
-
-          {/* Subtitle / Dynamic Real-Time Spoken Caption */}
-          <div className="mt-2.5 flex max-w-lg items-center justify-center gap-1.5 min-h-[26px]">
-            <Activity className="h-3.5 w-3.5 text-purple-400 animate-pulse shrink-0" />
-            <p className="text-sm text-slate-200 font-medium transition-all duration-150">
-              {transcript}
-            </p>
-          </div>
-
-          {/* 3D Iridescent Holographic Orb */}
-          <div className="my-1.5">
-            <OrbCore
-              status={status}
-              audioLevel={audioLevel}
-              onClick={handleToggleVoice}
-            />
-          </div>
-
-          {/* Quick Action Diagnostic Pills */}
-          <div className="z-10">
-            <QuickActions onAction={handleQuickAction} />
+          {/* Window Controls */}
+          <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <TitleBar status={voiceStatus} />
           </div>
         </div>
 
-        {/* Bottom Section: Fluid Waveform + Input Deck */}
-        <div className="relative z-10 flex flex-col items-center border-t border-white/10 bg-slate-950/40 pb-5 pt-1 backdrop-blur-md">
-          {/* Siri-style Fluid Waveform Ribbon */}
-          <div className="w-full">
-            <WaveformRibbon
-              isActive={status === 'listening' || status === 'speaking'}
-              audioLevel={audioLevel}
-              height={50}
-            />
-          </div>
+        {/* Main Workspace Body */}
+        <div className="relative flex flex-1 overflow-hidden">
+          {workspaceMode === 'meeting' ? (
+            /* Granola Split-Pane Workspace */
+            <div className="flex h-full w-full divide-x divide-white/10">
+              {/* Left 53%: Human Notepad + AI Enriched Notes */}
+              <div className="h-full w-[53%] overflow-hidden">
+                <MeetingNotepad
+                  meetingTitle={meetingTitle}
+                  onMeetingTitleChange={setMeetingTitle}
+                  rawNotes={rawNotes}
+                  onRawNotesChange={setRawNotes}
+                  enrichedNotes={enrichedNotes}
+                  actionItems={actionItems}
+                  onToggleActionItem={handleToggleActionItem}
+                  onAddActionItem={handleAddActionItem}
+                  slides={slides}
+                  isEnhancing={isEnhancing}
+                  onEnhance={handleEnhanceNotes}
+                  onSnapSlide={handleSnapSlide}
+                />
+              </div>
 
-          {/* Floating Command Input Deck */}
-          <form
-            onSubmit={handleSubmitText}
-            className="flex w-full max-w-xl items-center gap-2 rounded-2xl border border-white/15 bg-slate-900/80 p-1.5 shadow-lg backdrop-blur-xl"
-          >
-            <div className="flex items-center pl-3 text-slate-400">
-              <Sparkles className="h-4 w-4 text-purple-400" />
+              {/* Right 47%: Live AssemblyAI Streaming Transcript Feed */}
+              <div className="h-full w-[47%] overflow-hidden">
+                <TranscriptFeed
+                  isRecording={realtimeSTT.isRecording}
+                  isConnected={realtimeSTT.isConnected}
+                  currentUtterance={realtimeSTT.currentUtterance}
+                  turns={realtimeSTT.turns}
+                  formattedDuration={realtimeSTT.formattedDuration}
+                  onStartRecording={realtimeSTT.startRecording}
+                  onStopRecording={realtimeSTT.stopRecording}
+                  onSimulateDemo={realtimeSTT.simulateDemoMeeting}
+                  audioLevel={sttAudioLevel}
+                />
+              </div>
+
+              {/* Floating Voice Copilot Widget */}
+              <VoiceCopilotWidget
+                status={voiceStatus}
+                audioLevel={voiceAudioLevel}
+                transcript={voiceTranscript}
+                isConnected={voiceAgent.isConnected}
+                onToggleVoice={handleToggleVoice}
+              />
             </div>
+          ) : (
+            /* Desktop Copilot Workspace (Classic Plot) */
+            <div className="relative flex flex-1 flex-col items-center justify-between p-6">
+              <div className="relative flex flex-1 flex-col items-center justify-center text-center">
+                <div className="pointer-events-none absolute -top-16 h-64 w-96 rounded-full bg-gradient-to-r from-purple-500/20 to-cyan-500/20 blur-3xl" />
 
-            <input
-              type="text"
-              value={inputVal}
-              onChange={(e) => setInputVal(e.target.value)}
-              placeholder="Ask Plot anything or speak commands..."
-              className="flex-1 bg-transparent px-2 text-sm text-white placeholder-slate-500 outline-none"
-            />
+                <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">
+                  Autonomous <span className="bg-gradient-to-r from-purple-400 via-pink-300 to-cyan-400 bg-clip-text text-transparent">Desktop Voice</span> Intelligence
+                </h1>
 
-            {/* Telemetry Drawer Toggle */}
-            <button
-              type="button"
-              onClick={() => setIsDrawerOpen(!isDrawerOpen)}
-              className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 transition hover:bg-white/10 hover:text-white"
-              title="View Telemetry & Artifacts"
-            >
-              <LayoutDashboard className="h-4 w-4 text-cyan-400" />
-            </button>
+                <p className="mt-2 text-sm text-slate-300 font-medium">
+                  {voiceTranscript || 'Voice Agent active. Press Ctrl+Shift+Space to speak or trigger system actions.'}
+                </p>
 
-            {/* Realtime Live Voice Pill Toggle */}
-            <button
-              type="button"
-              onClick={handleToggleVoice}
-              className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
-                status === 'listening' || status === 'speaking'
-                  ? 'bg-gradient-to-r from-emerald-500/80 to-cyan-500/80 text-white shadow-md'
-                  : 'bg-white/10 text-slate-300 hover:bg-white/20'
-              }`}
-            >
-              {status === 'listening' || status === 'speaking' ? (
-                <>
-                  <Mic className="h-3.5 w-3.5 text-emerald-200 animate-pulse" />
-                  <span>Live</span>
-                </>
-              ) : (
-                <>
-                  <MicOff className="h-3.5 w-3.5 text-slate-400" />
-                  <span>Muted</span>
-                </>
-              )}
-            </button>
+                <div className="my-3">
+                  <OrbCore
+                    status={voiceStatus}
+                    audioLevel={voiceAudioLevel}
+                    onClick={handleToggleVoice}
+                  />
+                </div>
 
-            {/* Send Button */}
-            <button
-              type="submit"
-              className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white shadow-md transition hover:opacity-90"
-            >
-              <Send className="h-3.5 w-3.5" />
-            </button>
-          </form>
+                <div className="z-10 mt-2">
+                  <QuickActions
+                    onAction={async (action) => {
+                      if (action === 'screenshot') handleSnapSlide();
+                      if (action === 'processes') {
+                        const procs = await window.plotAPI?.getRunningApps(6);
+                        if (procs) {
+                          setProcesses(procs);
+                          setIsDrawerOpen(true);
+                        }
+                      }
+                      if (action === 'network') {
+                        const net = await window.plotAPI?.checkNetwork();
+                        if (net) {
+                          setNetwork(net);
+                          setIsDrawerOpen(true);
+                        }
+                      }
+                      if (action === 'health') {
+                        handleSnapSlide();
+                        const procs = await window.plotAPI?.getRunningApps(6);
+                        if (procs) setProcesses(procs);
+                        setIsDrawerOpen(true);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Waveform Ribbon */}
+              <div className="w-full">
+                <WaveformRibbon
+                  isActive={voiceStatus === 'listening' || voiceStatus === 'speaking'}
+                  audioLevel={voiceAudioLevel}
+                  height={50}
+                />
+              </div>
+            </div>
+          )}
         </div>
-
-        {/* Telemetry Slide-Over Drawer */}
-        <TelemetryDrawer
-          isOpen={isDrawerOpen}
-          onClose={() => setIsDrawerOpen(false)}
-          screenshot={screenshot}
-          processes={processes}
-          network={network}
-          onRefreshProcesses={() => window.plotAPI?.getRunningApps(6).then(setProcesses)}
-          onRefreshNetwork={() => window.plotAPI?.checkNetwork().then(setNetwork)}
-        />
       </div>
+
+      {/* Telemetry Slide Drawer */}
+      <TelemetryDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        screenshot={screenshot}
+        processes={processes}
+        network={network}
+        onRefreshProcesses={() => window.plotAPI?.getRunningApps(6).then(setProcesses)}
+        onRefreshNetwork={() => window.plotAPI?.checkNetwork().then(setNetwork)}
+      />
     </div>
   );
 }

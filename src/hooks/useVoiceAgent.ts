@@ -8,6 +8,10 @@ export interface UseVoiceAgentOptions {
   onScreenshotCaptured?: (result: ScreenshotResult) => void;
   onProcessesUpdated?: (processes: RunningProcess[]) => void;
   onNetworkUpdated?: (network: NetworkStatus) => void;
+  onAddActionItem?: (text: string, assignee: string) => void;
+  onTriggerEnhance?: () => void;
+  getActiveMeetingTranscript?: () => string;
+  getActiveNotes?: () => string;
 }
 
 export function useVoiceAgent(options: UseVoiceAgentOptions) {
@@ -32,6 +36,10 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
     onScreenshotCaptured,
     onProcessesUpdated,
     onNetworkUpdated,
+    onAddActionItem,
+    onTriggerEnhance,
+    getActiveMeetingTranscript,
+    getActiveNotes,
   } = options;
 
   // Single shared AudioContext for capture and playback at 24 kHz
@@ -100,7 +108,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
         const idx = activeAudioSourcesRef.current.indexOf(source);
         if (idx > -1) activeAudioSourcesRef.current.splice(idx, 1);
         if (activeAudioSourcesRef.current.length === 0 && !isSpeakingRef.current) {
-          onStatusChange?.('idle');
+          onStatusChange?.(sessionReadyRef.current ? 'listening' : 'idle');
           onAudioLevel?.(0);
         }
       };
@@ -137,18 +145,42 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
     let toolResult: unknown = { status: 'success' };
 
     try {
-      if (name === 'take_screenshot') {
+      if (name === 'take_screenshot' || name === 'snap_slide') {
         const result = await window.plotAPI?.takeScreenshot();
         if (result?.success) {
           onScreenshotCaptured?.(result);
           toolResult = {
             status: 'success',
-            message: 'Screenshot captured from primary display.',
+            message: 'Meeting slide screenshot captured and attached to notes.',
             timestamp: result.timestamp,
           };
         } else {
           toolResult = { status: 'error', error: result?.error ?? 'Failed to capture screenshot' };
         }
+      } else if (name === 'query_meeting') {
+        const query = (args?.query as string) || '';
+        const transcript = getActiveMeetingTranscript?.() || '';
+        const notes = getActiveNotes?.() || '';
+        toolResult = {
+          status: 'success',
+          meeting_transcript_context: transcript.slice(-2000) || '(No audio recorded in meeting yet)',
+          user_notes: notes.slice(-600) || '(No notes yet)',
+          query,
+        };
+      } else if (name === 'add_action_item') {
+        const taskText = (args?.text as string) || 'Follow up on discussion';
+        const assignee = (args?.assignee as string) || 'Team';
+        onAddActionItem?.(taskText, assignee);
+        toolResult = {
+          status: 'success',
+          message: `Added action item for ${assignee}: ${taskText}`,
+        };
+      } else if (name === 'enhance_notes') {
+        onTriggerEnhance?.();
+        toolResult = {
+          status: 'success',
+          message: 'Triggered AI note enhancement across meeting notes and transcript.',
+        };
       } else if (name === 'get_running_apps') {
         const limit = typeof args?.limit === 'number' ? args.limit : 5;
         const processes = await window.plotAPI?.getRunningApps(limit);
@@ -321,8 +353,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
             type: 'session.update',
             session: {
               system_prompt:
-                "You are Plot, an autonomous, voice-directed desktop intelligence copilot. Keep every spoken reply to one or two short, crisp sentences. Answer what was asked directly, lead with the answer, and skip conversational filler. No exclamation marks. You have real native tools: 'take_screenshot', 'get_running_apps', and 'check_network_status'. When asked about your screen, lag, slow computer, memory, apps, or wifi, invoke your tools immediately.",
-              greeting: 'Plot online. What can I do for you?',
+                "You are Plot, an elite executive meeting copilot and autonomous desktop assistant (inspired by Granola). Keep every spoken reply to one or two short, crisp sentences. Answer what was asked directly, lead with the answer, and skip conversational filler. No exclamation marks. You have tools to query the active meeting transcript ('query_meeting'), take a screenshot of presentation slides ('snap_slide'), add an action item ('add_action_item'), trigger note enhancement ('enhance_notes'), and inspect desktop vitals ('get_running_apps', 'check_network_status'). When asked about the meeting discussion, decisions, or slides, invoke your tools immediately.",
+              greeting: 'Plot meeting copilot active. How can I assist with this session?',
               input: {
                 format: { encoding: 'audio/pcm' },
                 turn_detection: {
@@ -335,7 +367,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
                 transcription_mode: 'min_latency',
                 voice_focus: 'near-field',
                 voice_focus_threshold: 0.85,
-                keyterms: ['Plot', 'screenshot', 'Wi-Fi', 'processes', 'RAM', 'memory', 'latency', 'ping'],
+                keyterms: ['Plot', 'meeting', 'action item', 'slide', 'screenshot', 'summary', 'deadline', 'notes', 'budget', 'agenda'],
               },
               output: {
                 voice: 'alba',
@@ -345,9 +377,59 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
               tools: [
                 {
                   type: 'function',
-                  name: 'take_screenshot',
+                  name: 'query_meeting',
                   description:
-                    'Capture a live screenshot of the user desktop display. Call this when the user asks you to take a screenshot, look at their screen, check what is displayed, or diagnose a visual issue.',
+                    'Query the active meeting transcript and notes to answer user questions about what was said, decisions made, numbers mentioned, or speaker comments.',
+                  parameters: {
+                    type: 'object',
+                    properties: {
+                      query: {
+                        type: 'string',
+                        description: 'The specific question or topic to look up in the meeting transcript',
+                      },
+                    },
+                    required: ['query'],
+                  },
+                  execution_mode: 'interactive',
+                },
+                {
+                  type: 'function',
+                  name: 'snap_slide',
+                  description:
+                    'Take a screenshot of the active presentation, shared screen, or primary display and attach it directly to the meeting notes.',
+                  parameters: {
+                    type: 'object',
+                    properties: {},
+                    required: [],
+                  },
+                  execution_mode: 'interactive',
+                },
+                {
+                  type: 'function',
+                  name: 'add_action_item',
+                  description:
+                    'Add a new action item or task to the meeting checklist with an optional assignee name.',
+                  parameters: {
+                    type: 'object',
+                    properties: {
+                      text: {
+                        type: 'string',
+                        description: 'The task description',
+                      },
+                      assignee: {
+                        type: 'string',
+                        description: 'Person responsible (e.g. Alex, Sarah, You, Team)',
+                      },
+                    },
+                    required: ['text'],
+                  },
+                  execution_mode: 'interactive',
+                },
+                {
+                  type: 'function',
+                  name: 'enhance_notes',
+                  description:
+                    'Trigger AI note enhancement to synthesize messy human bullet points with the full AssemblyAI transcript into executive summaries and decisions.',
                   parameters: {
                     type: 'object',
                     properties: {},
@@ -359,7 +441,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
                   type: 'function',
                   name: 'get_running_apps',
                   description:
-                    'Query top memory-intensive running applications and background processes on the operating system. Call this when the user asks why their computer is slow, what apps are open, or asks about memory/RAM usage.',
+                    'Query top memory-intensive running applications on the computer. Call this when the user asks about desktop performance or app memory during the call.',
                   parameters: {
                     type: 'object',
                     properties: {
@@ -376,7 +458,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
                   type: 'function',
                   name: 'check_network_status',
                   description:
-                    'Measure the current Wi-Fi network connection, signal percentage, local IP, and ping round-trip latency. Call this when the user asks about their internet speed, Wi-Fi quality, or connection status.',
+                    'Measure current Wi-Fi network connection, latency, and ping quality during the video call.',
                   parameters: {
                     type: 'object',
                     properties: {},
