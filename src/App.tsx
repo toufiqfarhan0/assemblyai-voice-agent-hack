@@ -110,7 +110,13 @@ export default function App() {
     if (!inputVal.trim()) return;
 
     const query = inputVal.toLowerCase();
+    const rawText = inputVal;
     setInputVal('');
+
+    if (voiceAgent.isConnected) {
+      voiceAgent.sendTextMessage(rawText);
+      return;
+    }
 
     if (query.includes('screenshot') || query.includes('screen')) {
       handleQuickAction('screenshot');

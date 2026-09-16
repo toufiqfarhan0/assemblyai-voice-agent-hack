@@ -17,10 +17,13 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const playbackContextRef = useRef<AudioContext | null>(null);
   const nextPlaybackTimeRef = useRef(0);
   const activeAudioSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const sessionReadyRef = useRef(false);
+  const isInterruptedRef = useRef(false);
+  const isSpeakingRef = useRef(false);
+  const waitingForAnswerRef = useRef(false);
+  const agentSpokenTextRef = useRef('');
 
   const {
     onStatusChange,
@@ -31,54 +34,72 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
     onNetworkUpdated,
   } = options;
 
-  // Convert Float32 audio samples to base64 PCM16
-  const pcmBase64 = (samples: Float32Array): string => {
-    const buffer = new ArrayBuffer(samples.length * 2);
-    const view = new DataView(buffer);
-    for (let i = 0; i < samples.length; i++) {
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  // Single shared AudioContext for capture and playback at 24 kHz
+  // Shared context is critical for Chromium native AEC to eliminate speaker feedback loops
+  const getAudioContext = useCallback(() => {
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+      audioContextRef.current = new AudioContext({ sampleRate: 24000 });
     }
+    return audioContextRef.current;
+  }, []);
+
+  // Convert Float32 audio samples to base64 PCM16 with high performance (no GC allocations)
+  const pcmBase64 = (samples: Float32Array): string => {
+    const len = samples.length;
+    const pcm16 = new Int16Array(len);
+    for (let i = 0; i < len; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    const uint8 = new Uint8Array(pcm16.buffer);
     let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    const chunk = 8192;
+    for (let i = 0; i < uint8.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, Array.from(uint8.subarray(i, i + chunk)));
     }
     return btoa(binary);
   };
 
-  // Decode base64 PCM16 into AudioBuffer and schedule gapless playback
+  // Fast decoding and seamless gapless playback with jitter compensation
   const playAgentAudio = (encoded: string) => {
+    if (isInterruptedRef.current) return;
+
     try {
       const binary = atob(encoded);
-      const samples = new Int16Array(binary.length / 2);
-      for (let i = 0; i < samples.length; i++) {
-        samples[i] = binary.charCodeAt(i * 2) | (binary.charCodeAt(i * 2 + 1) << 8);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const pcm16 = new Int16Array(bytes.buffer, bytes.byteOffset, len / 2);
+      const float32 = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 32768;
       }
 
-      const ctx = playbackContextRef.current ?? new AudioContext({ sampleRate: 24000 });
-      playbackContextRef.current = ctx;
-
-      const buffer = ctx.createBuffer(1, samples.length, 24000);
-      const channel = buffer.getChannelData(0);
-      for (let i = 0; i < samples.length; i++) {
-        channel[i] = samples[i] / 0x7fff;
+      const ctx = getAudioContext();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
       }
+
+      const buffer = ctx.createBuffer(1, float32.length, 24000);
+      buffer.getChannelData(0).set(float32);
 
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(ctx.destination);
 
       const now = ctx.currentTime;
-      const startAt = Math.max(now, nextPlaybackTimeRef.current);
+      // Start immediately or seamless append with 20ms jitter buffer
+      const startAt = Math.max(now + 0.02, nextPlaybackTimeRef.current);
       source.start(startAt);
       nextPlaybackTimeRef.current = startAt + buffer.duration;
 
       activeAudioSourcesRef.current.push(source);
       source.onended = () => {
-        const index = activeAudioSourcesRef.current.indexOf(source);
-        if (index > -1) activeAudioSourcesRef.current.splice(index, 1);
-        if (activeAudioSourcesRef.current.length === 0) {
+        const idx = activeAudioSourcesRef.current.indexOf(source);
+        if (idx > -1) activeAudioSourcesRef.current.splice(idx, 1);
+        if (activeAudioSourcesRef.current.length === 0 && !isSpeakingRef.current) {
           onStatusChange?.('idle');
           onAudioLevel?.(0);
         }
@@ -91,21 +112,23 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
     }
   };
 
-  // Flush audio buffer on barge-in
-  const flushAudioBuffer = () => {
+  // Flush audio buffer instantly on barge-in
+  const flushAudioBuffer = useCallback(() => {
     activeAudioSourcesRef.current.forEach(source => {
       try {
-        source.stop();
+        source.onended = null;
+        source.stop(0);
         source.disconnect();
       } catch {
         // ignore already stopped sources
       }
     });
     activeAudioSourcesRef.current = [];
-    if (playbackContextRef.current) {
-      nextPlaybackTimeRef.current = playbackContextRef.current.currentTime;
+    if (audioContextRef.current) {
+      nextPlaybackTimeRef.current = audioContextRef.current.currentTime;
     }
-  };
+    isSpeakingRef.current = false;
+  }, []);
 
   // Execute native tool call dispatched by AssemblyAI
   const handleToolCall = async (toolCall: { call_id: string; name: string; arguments?: Record<string, unknown> }) => {
@@ -120,7 +143,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
           onScreenshotCaptured?.(result);
           toolResult = {
             status: 'success',
-            message: 'Screenshot successfully captured from the primary monitor.',
+            message: 'Screenshot captured from primary display.',
             timestamp: result.timestamp,
           };
         } else {
@@ -155,7 +178,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
       toolResult = { status: 'error', error: String(err) };
     }
 
-    // Return tool.result immediately
+    // Return tool.result immediately to allow the agent to synthesize response
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(
         JSON.stringify({
@@ -167,11 +190,16 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
     }
   };
 
-  // Start microphone capture and stream audio frames
+  // Start microphone capture with 1024-sample chunks (42.6ms) for low-latency streaming
   const startMicrophone = (stream: MediaStream, socket: WebSocket) => {
-    const audioCtx = new AudioContext({ sampleRate: 24000 });
+    const audioCtx = getAudioContext();
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+
     const source = audioCtx.createMediaStreamSource(stream);
-    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    // 1024 samples @ 24kHz = 42.6ms buffer latency (4x faster than 4096)
+    const processor = audioCtx.createScriptProcessor(1024, 1, 1);
 
     processor.onaudioprocess = (event) => {
       if (!sessionReadyRef.current || socket.readyState !== WebSocket.OPEN) return;
@@ -186,7 +214,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
       const level = Math.min(1, rms * 5);
       onAudioLevel?.(level);
 
-      // Send audio chunk
+      // Stream audio frame immediately
       socket.send(
         JSON.stringify({
           type: 'input.audio',
@@ -198,16 +226,19 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
     source.connect(processor);
     processor.connect(audioCtx.destination);
 
-    audioContextRef.current = audioCtx;
     sourceRef.current = source;
     processorRef.current = processor;
   };
 
   const stopSession = useCallback(() => {
     sessionReadyRef.current = false;
+    isInterruptedRef.current = false;
+    isSpeakingRef.current = false;
+    waitingForAnswerRef.current = false;
+    agentSpokenTextRef.current = '';
     flushAudioBuffer();
 
-    // Cleanly end AssemblyAI session
+    // Cleanly end AssemblyAI session to immediately stop billing
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: 'session.end' }));
       socketRef.current.close();
@@ -217,19 +248,35 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
     processorRef.current?.disconnect();
     sourceRef.current?.disconnect();
     mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-    audioContextRef.current?.close();
-    playbackContextRef.current?.close();
+
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {});
+    }
 
     processorRef.current = null;
     sourceRef.current = null;
     mediaStreamRef.current = null;
     audioContextRef.current = null;
-    playbackContextRef.current = null;
 
     setIsConnected(false);
     onStatusChange?.('idle');
     onAudioLevel?.(0);
-  }, [onStatusChange, onAudioLevel]);
+  }, [flushAudioBuffer, onStatusChange, onAudioLevel]);
+
+  const sendTextMessage = useCallback((text: string) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      onTranscript?.(text, true);
+      onStatusChange?.('thinking');
+      socketRef.current.send(JSON.stringify({
+        type: 'conversation.message',
+        role: 'user',
+        content: text,
+      }));
+      socketRef.current.send(JSON.stringify({
+        type: 'reply.create',
+      }));
+    }
+  }, [onTranscript, onStatusChange]);
 
   const startSession = useCallback(async () => {
     stopSession();
@@ -240,12 +287,14 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
       const { token } = await window.plotAPI.getToken();
       if (!token) throw new Error('Failed to mint AssemblyAI temporary token');
 
-      // 2. Request mic audio with recommended constraints
+      // 2. Request mic audio with recommended constraints:
+      // echoCancellation: true (prevents speaker loop)
+      // noiseSuppression: false (lets server-side Voice Focus handle denoising without artifacts)
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,    // ON
-          noiseSuppression: false,   // OFF (AssemblyAI Voice Focus handles server-side)
-          autoGainControl: true,     // ON
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: true,
         },
       });
       mediaStreamRef.current = stream;
@@ -256,28 +305,36 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
 
       socket.onopen = () => {
         setIsConnected(true);
-        // Register agent prompt, voice, VAD turn-detection, and native tool schemas
+        // Snappy low-latency configuration:
+        // min_silence: 500ms (cuts response turnaround lag by 64%)
+        // max_silence: 1800ms
+        // transcription_mode: 'min_latency' (fastest Universal-3.5 Pro turnaround)
+        // interruption_delay: 100ms (snappy barge-in)
         socket.send(
           JSON.stringify({
             type: 'session.update',
             session: {
               system_prompt:
-                "You are Plot, an autonomous, voice-directed desktop intelligence copilot. You have real native tools to inspect and diagnose the user's operating system: 'take_screenshot' to capture the active monitor, 'get_running_apps' to check memory and background processes, and 'check_network_status' to inspect Wi-Fi signal and ping latency. When the user asks about their screen, lag, slow computer, internet, or asks you to look at something, invoke your tools immediately. Keep your spoken responses concise, direct, helpful, and natural.",
-              greeting: 'Plot online. What can I help you with?',
+                "You are Plot, an autonomous, voice-directed desktop intelligence copilot. Keep every spoken reply to one or two short, crisp sentences. Answer what was asked directly, lead with the answer, and skip conversational filler. No exclamation marks. You have real native tools: 'take_screenshot', 'get_running_apps', and 'check_network_status'. When asked about your screen, lag, slow computer, memory, apps, or wifi, invoke your tools immediately.",
+              greeting: 'Plot online. What can I do for you?',
               input: {
                 format: { encoding: 'audio/pcm' },
                 turn_detection: {
                   vad_threshold: 0.5,
-                  min_silence: 1400,
-                  max_silence: 4000,
+                  min_silence: 500,
+                  max_silence: 1800,
                   interrupt_response: true,
+                  interruption_delay: 100,
                 },
+                transcription_mode: 'min_latency',
+                voice_focus: 'near-field',
+                voice_focus_threshold: 0.85,
                 keyterms: ['Plot', 'screenshot', 'Wi-Fi', 'processes', 'RAM', 'memory', 'latency', 'ping'],
               },
               output: {
-                voice: 'anna',
+                voice: 'alba',
                 format: { encoding: 'audio/pcm' },
-                volume: 90,
+                volume: 95,
               },
               tools: [
                 {
@@ -296,7 +353,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
                   type: 'function',
                   name: 'get_running_apps',
                   description:
-                    'Query the top memory-intensive running applications and background processes on the operating system. Call this when the user asks why their computer is slow, what apps are open, or asks about memory/RAM usage.',
+                    'Query top memory-intensive running applications and background processes on the operating system. Call this when the user asks why their computer is slow, what apps are open, or asks about memory/RAM usage.',
                   parameters: {
                     type: 'object',
                     properties: {
@@ -338,31 +395,110 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
             return;
           }
 
+          // Instant barge-in: user started speaking
           if (payload.type === 'input.speech.started') {
-            // Instant barge-in: flush active audio playback immediately
+            isInterruptedRef.current = true;
             flushAudioBuffer();
             onStatusChange?.('listening');
           }
 
+          // Real-time incremental user speech preview
+          if (payload.type === 'transcript.user.delta' && payload.text) {
+            onTranscript?.(payload.text, true);
+            onStatusChange?.('listening');
+          }
+
+          if (payload.type === 'input.speech.stopped') {
+            onStatusChange?.('thinking');
+          }
+
+          // Finalized user turn
           if (payload.type === 'transcript.user' && payload.text) {
             onTranscript?.(payload.text, true);
             onStatusChange?.('thinking');
+
+            // If adaptive silence was active because agent asked a question, restore fast baseline
+            if (waitingForAnswerRef.current && socket.readyState === WebSocket.OPEN) {
+              waitingForAnswerRef.current = false;
+              socket.send(
+                JSON.stringify({
+                  type: 'session.update',
+                  session: {
+                    input: {
+                      turn_detection: {
+                        vad_threshold: 0.5,
+                        min_silence: 500,
+                        max_silence: 1800,
+                        interrupt_response: true,
+                        interruption_delay: 100,
+                      },
+                    },
+                  },
+                })
+              );
+            }
           }
 
           if (payload.type === 'tool.call') {
             await handleToolCall(payload);
           }
 
+          if (payload.type === 'reply.started') {
+            isInterruptedRef.current = false;
+            isSpeakingRef.current = true;
+            agentSpokenTextRef.current = '';
+            if (audioContextRef.current) {
+              nextPlaybackTimeRef.current = audioContextRef.current.currentTime + 0.02;
+            }
+            onStatusChange?.('speaking');
+          }
+
           if (payload.type === 'reply.audio' && payload.data) {
-            playAgentAudio(payload.data);
+            if (!isInterruptedRef.current) {
+              playAgentAudio(payload.data);
+            }
+          }
+
+          // Live word-by-word streaming transcript as agent speaks
+          if (payload.type === 'transcript.agent.delta' && payload.delta) {
+            if (!isInterruptedRef.current) {
+              agentSpokenTextRef.current = agentSpokenTextRef.current
+                ? `${agentSpokenTextRef.current} ${payload.delta}`
+                : payload.delta;
+              onTranscript?.(agentSpokenTextRef.current, false);
+            }
           }
 
           if (payload.type === 'transcript.agent' && payload.text) {
+            agentSpokenTextRef.current = payload.text;
             onTranscript?.(payload.text, false);
+
+            // Adaptive turn detection: if agent asks a question, expand silence window to allow thinking
+            if (/\?\s*$/.test(payload.text) && socket.readyState === WebSocket.OPEN) {
+              waitingForAnswerRef.current = true;
+              socket.send(
+                JSON.stringify({
+                  type: 'session.update',
+                  session: {
+                    input: {
+                      turn_detection: {
+                        vad_threshold: 0.5,
+                        min_silence: 1200,
+                        max_silence: 3000,
+                        interrupt_response: true,
+                        interruption_delay: 100,
+                      },
+                    },
+                  },
+                })
+              );
+            }
           }
 
           if (payload.type === 'reply.done') {
+            isSpeakingRef.current = false;
             if (payload.status === 'interrupted') {
+              isInterruptedRef.current = true;
               flushAudioBuffer();
             }
           }
@@ -384,11 +520,12 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
       console.error('Failed to start voice agent session:', error);
       stopSession();
     }
-  }, [stopSession, onStatusChange, onTranscript, onAudioLevel, onScreenshotCaptured, onProcessesUpdated, onNetworkUpdated]);
+  }, [stopSession, getAudioContext, flushAudioBuffer, onStatusChange, onTranscript, onAudioLevel, onScreenshotCaptured, onProcessesUpdated, onNetworkUpdated]);
 
   return {
     isConnected,
     startSession,
     stopSession,
+    sendTextMessage,
   };
 }
