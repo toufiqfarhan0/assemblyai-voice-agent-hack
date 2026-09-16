@@ -18,14 +18,16 @@ export interface ScreenshotResult {
   success: boolean;
   base64: string;
   timestamp: string;
+  error?: string;
 }
 
 export interface PlotAPI {
-  ping: () => string;
   takeScreenshot: () => Promise<ScreenshotResult>;
   getRunningApps: (limit?: number) => Promise<RunningProcess[]>;
   checkNetwork: () => Promise<NetworkStatus>;
   getToken: () => Promise<{ token: string; expiresInSeconds: number }>;
+  minimizeWindow: () => Promise<void>;
+  closeWindow: () => Promise<void>;
   onHotkeyTriggered: (callback: () => void) => () => void;
 }
 
