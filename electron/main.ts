@@ -18,8 +18,8 @@ let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1060,
-    height: 740,
+    width: 1440,
+    height: 900,
     minWidth: 840,
     minHeight: 620,
     transparent: true,
@@ -32,6 +32,8 @@ function createWindow() {
       contextIsolation: true,
     },
   });
+
+  mainWindow.maximize();
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -84,6 +86,30 @@ ipcMain.handle('notes:enhance', async (_event, rawNotes: string, transcript: str
 
 ipcMain.handle('window:minimize', () => {
   mainWindow?.minimize();
+});
+
+ipcMain.handle('window:toggle-maximize', () => {
+  if (mainWindow) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+    return mainWindow.isMaximized();
+  }
+  return false;
+});
+
+ipcMain.handle('window:is-maximized', () => {
+  return mainWindow?.isMaximized() ?? false;
+});
+
+ipcMain.handle('window:toggle-fullscreen', () => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(!mainWindow.isFullScreen());
+    return mainWindow.isFullScreen();
+  }
+  return false;
 });
 
 ipcMain.handle('window:close', () => {

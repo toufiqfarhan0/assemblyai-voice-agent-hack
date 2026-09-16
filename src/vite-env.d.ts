@@ -39,7 +39,14 @@ export interface PlotAPI {
   getSTTToken: () => Promise<{ token: string }>;
   enhanceNotes: (rawNotes: string, transcript: string) => Promise<EnrichedMeetingNotes>;
   minimizeWindow: () => Promise<void>;
+  toggleMaximize: () => Promise<boolean>;
+  isMaximized: () => Promise<boolean>;
+  toggleFullscreen: () => Promise<boolean>;
   closeWindow: () => Promise<void>;
+  zoomIn: () => number;
+  zoomOut: () => number;
+  resetZoom: () => number;
+  getZoomFactor: () => number;
   onHotkeyTriggered: (callback: () => void) => () => void;
 }
 

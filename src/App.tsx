@@ -157,12 +157,55 @@ export default function App() {
     }
   }, [handleToggleVoice]);
 
+  // Zoom state & handlers
+  const [zoomFactor, setZoomFactor] = useState(100);
+
+  const handleZoomIn = useCallback(() => {
+    if (window.plotAPI?.zoomIn) {
+      const z = window.plotAPI.zoomIn();
+      setZoomFactor(z);
+    }
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    if (window.plotAPI?.zoomOut) {
+      const z = window.plotAPI.zoomOut();
+      setZoomFactor(z);
+    }
+  }, []);
+
+  const handleResetZoom = useCallback(() => {
+    if (window.plotAPI?.resetZoom) {
+      const z = window.plotAPI.resetZoom();
+      setZoomFactor(z);
+    }
+  }, []);
+
+  // Keyboard shortcut listener: Ctrl + / Ctrl - / Ctrl 0
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          handleZoomIn();
+        } else if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          handleZoomOut();
+        } else if (e.key === '0') {
+          e.preventDefault();
+          handleResetZoom();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleZoomIn, handleZoomOut, handleResetZoom]);
+
   return (
-    <div className="relative flex h-screen w-screen items-center justify-center p-3 select-none">
-      {/* Frosted Glass Floating Command Card */}
-      <div className="glass-panel relative flex h-full max-h-[760px] w-full max-w-[1140px] flex-col overflow-hidden rounded-[28px] border border-white/15 bg-slate-950/85 shadow-2xl">
-        {/* Title Bar & Top Nav */}
-        <div className="flex h-12 w-full items-center justify-between border-b border-white/10 px-5" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-slate-100 select-none">
+      {/* Fullscreen Top Navigation Bar */}
+      <div className="flex h-12 w-full shrink-0 items-center justify-between border-b border-white/10 bg-slate-950/90 px-4 backdrop-blur-md" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
           {/* Brand Emblem & Mode Selector */}
           <div className="flex items-center gap-4" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <div className="flex items-center gap-2">
@@ -224,9 +267,14 @@ export default function App() {
             </div>
           </div>
 
-          {/* Window Controls */}
+          {/* Zoom and Window Controls */}
           <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            <TitleBar status={voiceStatus} />
+            <TitleBar
+              zoomFactor={zoomFactor}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onResetZoom={handleResetZoom}
+            />
           </div>
         </div>
 
@@ -339,7 +387,6 @@ export default function App() {
             </div>
           )}
         </div>
-      </div>
 
       {/* Telemetry Slide Drawer */}
       <TelemetryDrawer
